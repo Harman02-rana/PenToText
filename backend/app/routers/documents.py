@@ -1,6 +1,7 @@
 import json
 import mimetypes
 import os
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
@@ -27,6 +28,12 @@ CATEGORY_DESCRIPTIONS = {
 }
 
 _gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+GEMINI_MODELS = (
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3.5-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3.1-flash-lite",
+)
 
 
 def _run_transcription(
@@ -69,11 +76,28 @@ def _run_transcription(
         uploaded_file = _gemini_client.files.upload(
             file=file_path, config=types.UploadFileConfig(mime_type=mime_type)
         )
-        response = _gemini_client.models.generate_content(
-            model="gemini-flash-latest",
-            contents=[uploaded_file, prompt],
-            config=types.GenerateContentConfig(response_mime_type="application/json"),
-        )
+        last_error = None
+        response = None
+        for model in GEMINI_MODELS:
+            for attempt in range(3):
+                try:
+                    response = _gemini_client.models.generate_content(
+                        model=model,
+                        contents=[uploaded_file, prompt],
+                        config=types.GenerateContentConfig(response_mime_type="application/json"),
+                    )
+                    break
+                except Exception as model_error:
+                    last_error = model_error
+                    # 503 means the model is busy, so wait and try it again.
+                    if "503" in str(model_error) and attempt < 2:
+                        time.sleep(2 * (attempt + 1))
+                        continue
+                    break
+            if response is not None:
+                break
+        if response is None:
+            raise last_error
         # Gemini's response_mime_type=json sometimes appends stray trailing
         # characters after the JSON object, so parse only the first value.
         data, _ = json.JSONDecoder().raw_decode(response.text.strip())

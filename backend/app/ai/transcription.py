@@ -3,15 +3,20 @@ from typing import Any, Dict, List
 import easyocr
 import numpy as np
 
+_reader = None
 
-reader = easyocr.Reader(
-    ["en"],
-    gpu=False
-)
+
+def _get_reader():
+    """Load EasyOCR on first use so the API can start without downloading models."""
+    global _reader
+    if _reader is None:
+        # verbose=False avoids a Windows console crash on the progress-bar character.
+        _reader = easyocr.Reader(["en"], gpu=False, verbose=False)
+    return _reader
 
 
 def _run_easyocr(image: np.ndarray) -> Dict[str, Any]:
-    results = reader.readtext(
+    results = _get_reader().readtext(
         image,
         detail=1,
         paragraph=False
